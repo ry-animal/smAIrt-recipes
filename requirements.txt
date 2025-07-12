@@ -1,0 +1,32 @@
+# Core Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+
+# LangChain & AI
+langchain==0.1.0
+langchain-google-genai==0.0.8
+langchain-community==0.0.13
+langgraph==0.0.26
+
+# Google Generative AI
+google-generativeai==0.3.2
+
+# Data Processing
+pydantic==2.5.0
+python-dotenv==1.0.0
+Pillow==10.1.0
+requests==2.31.0
+
+# Optional: Hugging Face Integration
+transformers>=4.36.0
+torch>=2.2.0
+sentence-transformers>=2.2.2
+
+# Optional: External Recipe APIs
+spoonacular-api-python==1.0.0
+
+# Development
+pytest==7.4.3
+black==23.11.0
+flake8==6.1.0
