@@ -23,9 +23,6 @@ transformers>=4.36.0
 torch>=2.2.0
 sentence-transformers>=2.2.2
 
-# Optional: External Recipe APIs
-spoonacular-api-python==1.0.0
-
 # Development
 pytest==7.4.3
 black==23.11.0
