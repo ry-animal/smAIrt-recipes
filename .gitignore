@@ -37,3 +37,4 @@ coverage/
 
 # Ignore local scripts
 kill-services.bat 
+.vercel
