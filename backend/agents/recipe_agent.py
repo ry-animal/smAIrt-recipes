@@ -67,6 +67,25 @@ class CookingQuestionTool(BaseTool):
     def _run(self, question: str, context: str = "") -> str:
         return self.gemini_service.answer_cooking_question(question, context)
 
+class HuggingFaceIngredientRecognitionTool(BaseTool):
+    name: str = "hf_ingredient_recognition"
+    description: str = "Identifies food class from an uploaded image using HuggingFace ViT (food101)"
+    gemini_service: GeminiService = Field(exclude=True)
+    def __init__(self, gemini_service: GeminiService, **kwargs):
+        super().__init__(gemini_service=gemini_service, **kwargs)
+    def _run(self, image_data: str) -> str:
+        try:
+            if image_data.startswith('data:image'):
+                image_data = image_data.split(',')[1]
+            import base64, io
+            from PIL import Image
+            image_bytes = base64.b64decode(image_data)
+            image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+            food_label = self.gemini_service._hf_predict(image)
+            return f"[HF] Predicted food: {food_label.replace('_', ' ')}"
+        except Exception as e:
+            return f"[HF] Error: {str(e)}"
+
 class RecipeAgent:
     def __init__(self):
         if not Config.GEMINI_API_KEY:
@@ -85,6 +104,7 @@ class RecipeAgent:
         )
         self.tools = [
             IngredientRecognitionTool(self.gemini_service),
+            HuggingFaceIngredientRecognitionTool(self.gemini_service),
             RecipeSearchTool(self.gemini_service, self.recipe_api_service),
             CookingQuestionTool(self.gemini_service)
         ]
@@ -182,12 +202,16 @@ class RecipeAgent:
             last_message = state["messages"][-1]
             image_data = state.get("image_data", "")
             ingredient_tool = next(tool for tool in self.tools if tool.name == "ingredient_recognition")
+            hf_tool = next(tool for tool in self.tools if tool.name == "hf_ingredient_recognition")
             try:
-                result = ingredient_tool._run(image_data)
-                state["ingredients"] = result
-                response = f"Identified ingredients: {result}"
+                gemini_result = ingredient_tool._run(image_data)
             except Exception as e:
-                response = "I'm having trouble identifying ingredients right now. Please try again."
+                gemini_result = f"[Gemini] Error: {str(e)}"
+            try:
+                hf_result = hf_tool._run(image_data)
+            except Exception as e:
+                hf_result = f"[HF] Error: {str(e)}"
+            response = f"Gemini: {gemini_result}\nHuggingFace: {hf_result}"
             state["messages"].append(AIMessage(content=response))
             return state
         def route_query(state: RecipeAgentState) -> str:

@@ -5,6 +5,9 @@ import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 from PIL import Image
 import io
+import torch
+from transformers import ViTImageProcessor, ViTForImageClassification
+from sentence_transformers import SentenceTransformer
 
 from config import Config
 
@@ -15,13 +18,36 @@ class GeminiService:
         genai.configure(api_key=Config.GEMINI_API_KEY)
         self.vision_model = genai.GenerativeModel('gemini-2.0-flash-exp')
         self.text_model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        self.hf_processor = None
+        self.hf_model = None
+        self.hf_class_names = None
+        self.st_model = None
+
+    def _hf_load(self):
+        if self.hf_processor is None or self.hf_model is None:
+            self.hf_processor = ViTImageProcessor.from_pretrained("nateraw/food")
+            self.hf_model = ViTForImageClassification.from_pretrained("nateraw/food")
+            self.hf_class_names = self.hf_model.config.id2label
+
+    def _hf_predict(self, image: 'PIL.Image.Image') -> str:
+        self._hf_load()
+        inputs = self.hf_processor(images=image, return_tensors="pt")
+        with torch.no_grad():
+            logits = self.hf_model(**inputs).logits
+        predicted_class_idx = logits.argmax(-1).item()
+        return self.hf_class_names[predicted_class_idx]
+
+    def ingredient_embeddings(self, ingredients: list[str]) -> list[list[float]]:
+        if self.st_model is None:
+            self.st_model = SentenceTransformer('all-MiniLM-L6-v2')
+        return self.st_model.encode(ingredients, convert_to_numpy=True).tolist()
 
     def identify_ingredients(self, image_data: str) -> List[str]:
         try:
             if image_data.startswith('data:image'):
                 image_data = image_data.split(',')[1]
             image_bytes = base64.b64decode(image_data)
-            image = Image.open(io.BytesIO(image_bytes))
+            image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
             ingredient_schema = {
                 "type": "object",
                 "properties": {
@@ -59,9 +85,22 @@ class GeminiService:
             for ingredient in ingredients:
                 if isinstance(ingredient, str) and ingredient.strip():
                     cleaned_ingredients.append(ingredient.strip().lower())
-            return cleaned_ingredients
+            if cleaned_ingredients:
+                return cleaned_ingredients
         except Exception as e:
-            print(f"Error identifying ingredients with structured output: {str(e)}")
+            print(f"Error identifying ingredients with Gemini: {str(e)}")
+        # HuggingFace fallback
+        try:
+            if image is None:
+                if image_data.startswith('data:image'):
+                    image_data = image_data.split(',')[1]
+                image_bytes = base64.b64decode(image_data)
+                image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+            food_label = self._hf_predict(image)
+            print(f"[HF fallback] Predicted food: {food_label}")
+            return [food_label.replace('_', ' ')]
+        except Exception as e:
+            print(f"Error in HuggingFace fallback: {str(e)}")
             return []
 
     def suggest_recipes(self, ingredients: List[str], dietary_preferences: str = None) -> List[Dict[str, Any]]:

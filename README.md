@@ -4,11 +4,21 @@ A multimodal AI-powered cooking assistant that helps you discover recipes based 
 
 ## Features
 
-- **Ingredient Recognition**: Upload photos of your ingredients and get automatic identification
+- **Ingredient Recognition**: Upload photos of your ingredients and get automatic identification (Gemini + HuggingFace fallback)
 - **Recipe Suggestions**: Receive personalized recipe recommendations based on available ingredients
 - **Cooking Chat**: Ask cooking questions and get expert guidance on techniques, substitutions, and tips
 - **Shopping Lists**: Generate shopping lists for your chosen recipes
 - **Multimodal Interface**: Seamlessly switch between image uploads and text conversations
+- **Semantic Search & Clustering**: Find and group similar ingredients or recipes using AI-powered embeddings
+
+## Advanced/Over-Engineered Features
+
+- **HuggingFace ViT fallback** for ingredient recognition if Gemini is unavailable
+- **Ingredient Embeddings**: `/api/ingredient-embed` returns vector embeddings for ingredient strings
+- **Ingredient Semantic Search**: `/api/ingredient-semantic-search` finds the most similar ingredients to a query
+- **Ingredient Clustering**: `/api/ingredient-cluster` groups ingredients by meaning
+- **Recipe Semantic Search**: `/api/recipe-semantic-search` finds the most similar recipes to a query
+- **Recipe Clustering**: `/api/recipe-cluster` groups recipes by similarity
 
 ## Technology Stack
 
@@ -94,60 +104,12 @@ npm run kill
 - POST `/api/chat`
 - POST `/api/search_recipes`
 - POST `/api/shopping_list`
+- POST `/api/ingredient-embed`
+- POST `/api/ingredient-semantic-search`
+- POST `/api/ingredient-cluster`
+- POST `/api/recipe-semantic-search`
+- POST `/api/recipe-cluster`
 
 ## Docker (Local/Dev Only)
 
-- `Dockerfile.backend` and `docker-compose.yml` are for local/dev/alt deployment only.
-- Vercel does **not** use these files for production.
-- You can still run the backend locally as a FastAPI server for development/testing.
-
-## Deployment
-
-### Vercel
-
-- Connect your repo to Vercel and deploy.
-- Set environment variables in the Vercel dashboard.
-- Both frontend and backend will be deployed as serverless/static.
-
-### Local Docker (Dev/Alt)
-
-- Use `docker-compose up --build` to run both backend and frontend locally.
-- Not used in production on Vercel.
-
-## License
-
-MIT License - see LICENSE file for details
-
-## Support
-
-For questions or issues:
-
-1. Check the documentation in the `docs/` folder
-2. Search existing issues on GitHub
-3. Create a new issue with detailed information
-
-## Troubleshooting
-
-### Common Issues
-
-1. **"GEMINI_API_KEY not found"**
-
-   - Ensure your `.env` file is properly configured
-   - Check that the API key is valid and has necessary permissions
-
-2. **Image upload fails**
-
-   - Verify the image is in a supported format (JPG, PNG, WebP)
-   - Check file size is under 10MB
-   - Ensure the backend server is running
-
-3. **Frontend can't connect to backend**
-
-   - Verify backend is running on port 8080
-   - Check CORS settings in `real_vision_server.py`
-   - Confirm API URLs in frontend components
-
-4. **Dependencies installation fails**
-   - Use Python 3.8+ and Node.js 16+
-   - Try creating a fresh virtual environment
-   - Check for any conflicting global packages
+- `

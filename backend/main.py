@@ -1,9 +1,11 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import base64
 from typing import Optional, List
 import uvicorn
+import numpy as np
+from sklearn.cluster import KMeans
 
 from services.gemini_service import GeminiService
 from agents.recipe_agent import RecipeAgent
@@ -55,6 +57,44 @@ class ShoppingListRequest(BaseModel):
     recipe: dict
     available_ingredients: Optional[List[str]] = []
 
+class IngredientEmbedRequest(BaseModel):
+    ingredients: list[str]
+
+class IngredientEmbedResponse(BaseModel):
+    embeddings: list[dict]
+
+class IngredientSemanticSearchRequest(BaseModel):
+    query: str
+    candidates: list[str]
+    top_n: int = 5
+
+class IngredientSemanticSearchResponse(BaseModel):
+    matches: list[dict]
+
+class RecipeSemanticSearchRequest(BaseModel):
+    query: str
+    candidates: list[dict]
+    top_n: int = 3
+
+class RecipeSemanticSearchResponse(BaseModel):
+    matches: list[dict]
+
+class RecipeClusterRequest(BaseModel):
+    candidates: list[dict]
+    k: int = 3
+
+class RecipeClusterResponse(BaseModel):
+    clusters: list[dict]
+    centroids: list[list[float]]
+
+class IngredientClusterRequest(BaseModel):
+    ingredients: list[str]
+    k: int = 3
+
+class IngredientClusterResponse(BaseModel):
+    clusters: list[dict]
+    centroids: list[list[float]]
+
 @app.get("/")
 async def root():
     return {"message": "Smart Recipe Assistant API"}
@@ -81,11 +121,27 @@ async def analyze_ingredients(upload: ImageUpload):
                 ingredients_identified=fallback_ingredients
             )
         result = recipe_agent.process_image_query(upload.image_data)
-        if not result["ingredients"]:
-            raise HTTPException(status_code=400, detail=result["message"])
+        # result["messages"][-1].content contains both Gemini and HF results as a string
+        # Parse out both for the response
+        content = result["messages"][-1].content if "messages" in result and result["messages"] else ""
+        gemini_ingredients = []
+        hf_ingredients = []
+        import re
+        gemini_match = re.search(r"Gemini: (.+?)\\n", content)
+        hf_match = re.search(r"HuggingFace: (.+)", content)
+        if gemini_match:
+            gemini_ingredients = [s.strip() for s in gemini_match.group(1).replace("Identified ingredients:", "").split(",") if s.strip()]
+        if hf_match:
+            hf_ingredients = [s.strip() for s in hf_match.group(1).replace("[HF] Predicted food:", "").split(",") if s.strip()]
+        # For recipes, use Gemini ingredients if available, else fallback to HF, else fallback
+        ingredients_for_recipes = gemini_ingredients or hf_ingredients or ["onion", "carrot", "potato"]
+        recipes = gemini_service.suggest_recipes(ingredients_for_recipes)
         return RecipeResponse(
-            recipes=result["recipes"],
-            ingredients_identified=result["ingredients"]
+            recipes=recipes,
+            ingredients_identified={
+                "gemini": gemini_ingredients,
+                "huggingface": hf_ingredients
+            }
         )
     except Exception as e:
         print(f"❌ Image analysis error: {str(e)}")
@@ -113,7 +169,7 @@ async def search_recipes_by_ingredients(request: IngredientSearchRequest):
                 "name": f"Vegetable Stir-Fry with {ingredients_str}",
                 "ingredients": request.ingredients + ["2 tbsp soy sauce", "1 tbsp olive oil", "2 cloves garlic", "salt", "pepper"],
                 "instructions": f"1. Heat olive oil in a large pan over medium-high heat\n2. Add minced garlic and cook for 1 minute until fragrant\n3. Add {request.ingredients[0]} and cook for 3-4 minutes\n4. Add remaining vegetables: {', '.join(request.ingredients[1:]) if len(request.ingredients) > 1 else ''}\n5. Stir-fry for 5-7 minutes until vegetables are tender-crisp\n6. Add soy sauce and season with salt and pepper to taste\n7. Serve immediately while hot",
-                "cooking_time": "15 minutes", 
+                "cooking_time": "15 minutes",
                 "servings": 4,
                 "source": "Fallback Recipe"
             },
@@ -122,7 +178,7 @@ async def search_recipes_by_ingredients(request: IngredientSearchRequest):
                 "ingredients": request.ingredients + ["3 tbsp olive oil", "1 tsp dried herbs", "salt", "pepper"],
                 "instructions": f"1. Preheat oven to 425°F (220°C)\n2. Wash and chop all vegetables into uniform pieces\n3. Toss vegetables with olive oil, herbs, salt, and pepper\n4. Spread evenly on a baking sheet\n5. Roast for 25-30 minutes, stirring once halfway through\n6. Cook until vegetables are golden and tender\n7. Serve as a side dish or over rice",
                 "cooking_time": "35 minutes",
-                "servings": 4, 
+                "servings": 4,
                 "source": "Fallback Recipe"
             }
         ]
@@ -161,6 +217,95 @@ async def generate_shopping_list(request: ShoppingListRequest):
             "recipe_name": request.recipe.get("name", "Unknown Recipe"),
             "total_items": len(shopping_items)
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/ingredient-embed", response_model=IngredientEmbedResponse)
+async def ingredient_embed(request: IngredientEmbedRequest):
+    try:
+        embeddings = gemini_service.ingredient_embeddings(request.ingredients)
+        return IngredientEmbedResponse(
+            embeddings=[{"ingredient": ing, "embedding": emb} for ing, emb in zip(request.ingredients, embeddings)]
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/ingredient-semantic-search", response_model=IngredientSemanticSearchResponse)
+async def ingredient_semantic_search(request: IngredientSemanticSearchRequest):
+    try:
+        all_ingredients = [request.query] + request.candidates
+        embeddings = gemini_service.ingredient_embeddings(all_ingredients)
+        query_emb = np.array(embeddings[0])
+        candidate_embs = np.array(embeddings[1:])
+        # Cosine similarity
+        sims = candidate_embs @ query_emb / (np.linalg.norm(candidate_embs, axis=1) * np.linalg.norm(query_emb) + 1e-8)
+        top_idx = sims.argsort()[::-1][:request.top_n]
+        matches = [
+            {"ingredient": request.candidates[i], "score": float(sims[i])}
+            for i in top_idx
+        ]
+        return IngredientSemanticSearchResponse(matches=matches)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/recipe-semantic-search", response_model=RecipeSemanticSearchResponse)
+async def recipe_semantic_search(request: RecipeSemanticSearchRequest):
+    try:
+        def recipe_to_text(recipe):
+            name = recipe.get("name", "")
+            ingredients = recipe.get("ingredients", [])
+            if isinstance(ingredients, list):
+                ingredients = ", ".join(ingredients)
+            return f"{name}: {ingredients}"
+        candidate_texts = [recipe_to_text(r) for r in request.candidates]
+        all_texts = [request.query] + candidate_texts
+        embeddings = gemini_service.ingredient_embeddings(all_texts)
+        query_emb = np.array(embeddings[0])
+        candidate_embs = np.array(embeddings[1:])
+        sims = candidate_embs @ query_emb / (np.linalg.norm(candidate_embs, axis=1) * np.linalg.norm(query_emb) + 1e-8)
+        top_idx = sims.argsort()[::-1][:request.top_n]
+        matches = [
+            {"recipe": request.candidates[i], "score": float(sims[i])}
+            for i in top_idx
+        ]
+        return RecipeSemanticSearchResponse(matches=matches)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/recipe-cluster", response_model=RecipeClusterResponse)
+async def recipe_cluster(request: RecipeClusterRequest):
+    try:
+        def recipe_to_text(recipe):
+            name = recipe.get("name", "")
+            ingredients = recipe.get("ingredients", [])
+            if isinstance(ingredients, list):
+                ingredients = ", ".join(ingredients)
+            return f"{name}: {ingredients}"
+        texts = [recipe_to_text(r) for r in request.candidates]
+        embeddings = gemini_service.ingredient_embeddings(texts)
+        kmeans = KMeans(n_clusters=request.k, n_init=10, random_state=42)
+        labels = kmeans.fit_predict(embeddings)
+        clusters = [
+            {"recipe": recipe, "cluster": int(label)}
+            for recipe, label in zip(request.candidates, labels)
+        ]
+        centroids = kmeans.cluster_centers_.tolist()
+        return RecipeClusterResponse(clusters=clusters, centroids=centroids)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/ingredient-cluster", response_model=IngredientClusterResponse)
+async def ingredient_cluster(request: IngredientClusterRequest):
+    try:
+        embeddings = gemini_service.ingredient_embeddings(request.ingredients)
+        kmeans = KMeans(n_clusters=request.k, n_init=10, random_state=42)
+        labels = kmeans.fit_predict(embeddings)
+        clusters = [
+            {"ingredient": ing, "cluster": int(label)}
+            for ing, label in zip(request.ingredients, labels)
+        ]
+        centroids = kmeans.cluster_centers_.tolist()
+        return IngredientClusterResponse(clusters=clusters, centroids=centroids)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
