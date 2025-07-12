@@ -14,8 +14,7 @@ A multimodal AI-powered cooking assistant that helps you discover recipes based 
 
 ### Backend
 
-- **Python 3.8+** with FastAPI
-- **LangChain & LangGraph** for AI orchestration
+- **Vercel Python Serverless Functions** (api/\*.py)
 - **Google Gemini API** for vision and text processing
 - **Pydantic** for data validation
 
@@ -28,7 +27,7 @@ A multimodal AI-powered cooking assistant that helps you discover recipes based 
 
 ## Quick Start
 
-### Automated Setup (Recommended)
+### Local Development (Docker, for dev/alt only)
 
 ```bash
 # Clone and setup everything
@@ -38,63 +37,36 @@ cd smairt-recipes
 # Install all dependencies
 npm run setup
 
-# Start both backend and frontend
+# Start both backend and frontend (local/dev only)
 npm start
 
 # When done, stop all services
 npm run kill
 ```
 
+### Vercel Deployment (Recommended)
+
+1. Connect your GitHub repo to Vercel.
+2. Vercel will auto-detect the frontend (React) and backend (api/\*.py Python functions).
+3. Configure your environment variables (API keys) in the Vercel dashboard.
+4. Deploy!
+
+- Backend endpoints are now serverless functions in `/api/` (e.g., `/api/analyze_ingredients`).
+- Frontend is built and served as a static site.
+
 ## Setup Instructions
 
 ### Prerequisites
 
-- Python 3.8 or higher
+- Python 3.8 or higher (for local dev)
 - Node.js 16 or higher
 - Google Gemini API key
 
-### Backend Setup
+### Backend (Vercel Python Functions)
 
-1. **Clone the repository**
-
-   ```bash
-   git clone <repository-url>
-   cd smairt-recipes
-   ```
-
-2. **Create Python virtual environment**
-
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-3. **Install Python dependencies**
-
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Set up environment variables**
-
-   ```bash
-   cp .env.example .env
-   ```
-
-   Edit `.env` and add your API keys:
-
-   ```
-   GEMINI_API_KEY=your_gemini_api_key_here
-   HUGGINGFACE_API_KEY=your_huggingface_api_key_here  # Optional
-   SPOONACULAR_API_KEY=your_spoonacular_api_key_here  # Optional
-   DEBUG=True
-   ```
-
-5. **Run the backend server**
-   ```bash
-   python real_vision_server.py
-   ```
-   The API will be available at `http://localhost:8080`
+- Each API endpoint is a Python file in `/api/` (e.g., `api/analyze_ingredients.py`).
+- No need to run a FastAPI server for production—Vercel handles routing and execution.
+- For local/dev, you can still use Docker and the old FastAPI server if needed.
 
 ### Frontend Setup
 
@@ -116,166 +88,31 @@ npm run kill
    ```
    The app will be available at `http://localhost:3000`
 
-## Getting API Keys
-
-### Google Gemini API
-
-1. Go to [Google AI Studio](https://makersuite.google.com/app/apikey)
-2. Create a new API key
-3. Copy the key to your `.env` file
-
-### Optional APIs
-
-- **Hugging Face**: For additional model options
-- **Spoonacular**: For enhanced recipe database access
-
-## Usage
-
-### Upload Ingredients
-
-1. Click "Upload Ingredients" in the navigation
-2. Select or drag an image of your ingredients
-3. Click "Analyze Ingredients"
-4. View identified ingredients and recipe suggestions
-
-### Ask Cooking Questions
-
-1. Click "Ask Questions" in the navigation
-2. Type your cooking question in the chat interface
-3. Get instant responses about techniques, substitutions, and tips
-
-### Generate Shopping Lists
-
-1. After selecting a recipe, click "Shopping List"
-2. Get a customized list of ingredients to purchase
-
-## Project Structure
-
-```
-smairt-recipes/
-├── backend/
-│   ├── main.py                 # FastAPI application
-│   ├── config.py              # Configuration management
-│   ├── services/
-│   │   └── gemini_service.py  # Gemini API integration
-│   └── agents/
-│       └── recipe_agent.py    # LangGraph agent
-├── frontend/
-│   ├── src/
-│   │   ├── App.tsx            # Main React component
-│   │   └── components/        # React components
-│   │       ├── ImageUpload.tsx
-│   │       ├── ChatInterface.tsx
-│   │       └── RecipeDisplay.tsx
-│   ├── tailwind.config.js     # Tailwind configuration
-│   └── package.json
-├── requirements.txt           # Python dependencies
-├── .env.example              # Environment variables template
-└── README.md
-```
-
 ## API Endpoints
 
-### POST /api/analyze-ingredients
+- POST `/api/analyze_ingredients`
+- POST `/api/chat`
+- POST `/api/search_recipes`
+- POST `/api/shopping_list`
 
-Analyze ingredient photos and get recipe suggestions
+## Docker (Local/Dev Only)
 
-- **Body**: `{"image_data": "base64_encoded_image"}`
-- **Response**: `{"recipes": [...], "ingredients_identified": [...]}`
-
-### POST /api/chat
-
-Handle cooking questions and conversations
-
-- **Body**: `{"query": "your question", "context": "optional context"}`
-- **Response**: `{"response": "answer", "type": "clarification"}`
-
-### POST /api/shopping-list
-
-Generate shopping lists for recipes
-
-- **Body**: `{"recipe": {...}, "available_ingredients": [...]}`
-- **Response**: `{"shopping_list": [...]}`
-
-## Development
-
-### NPM Scripts
-
-```bash
-# Start/Stop Services
-npm start              # Start both backend (8080) and frontend (3000)
-npm run dev            # Same as npm start
-npm run kill           # Stop all services
-npm run stop           # Same as npm run kill
-
-# Individual Services
-npm run start:backend  # Start only backend on port 8080
-npm run start:frontend # Start only frontend on port 3000
-
-# Setup
-npm run setup          # Install all dependencies
-npm run install:all    # Same as npm run setup
-```
-
-### Manual Control
-
-```bash
-# Start services manually
-python real_vision_server.py  # Backend on port 8080
-cd frontend && npm start       # Frontend on port 3000
-
-# Stop services manually
-./kill-services.sh             # Linux/Mac
-kill-services.bat              # Windows
-```
-
-### Running Tests
-
-```bash
-# Backend tests
-python -m pytest
-
-# Frontend tests
-cd frontend && npm test
-```
-
-### Code Formatting
-
-```bash
-# Backend
-python -m black .
-python -m flake8 .
-
-# Frontend
-cd frontend && npm run format
-cd frontend && npm run lint
-```
+- `Dockerfile.backend` and `docker-compose.yml` are for local/dev/alt deployment only.
+- Vercel does **not** use these files for production.
+- You can still run the backend locally as a FastAPI server for development/testing.
 
 ## Deployment
 
-### Backend Deployment
+### Vercel
 
-The backend is configured for deployment on:
+- Connect your repo to Vercel and deploy.
+- Set environment variables in the Vercel dashboard.
+- Both frontend and backend will be deployed as serverless/static.
 
-- Google Cloud Run
-- AWS Lambda
-- Traditional VPS with uvicorn
+### Local Docker (Dev/Alt)
 
-### Frontend Deployment
-
-The React frontend can be deployed to:
-
-- Vercel
-- Netlify
-- AWS S3 + CloudFront
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Submit a pull request
+- Use `docker-compose up --build` to run both backend and frontend locally.
+- Not used in production on Vercel.
 
 ## License
 

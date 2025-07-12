@@ -1,3 +1,5 @@
+# NOTE: This Dockerfile is for local/dev/alt deployment only.
+# Vercel Python serverless functions do not use this Dockerfile.
 FROM python:3.10-slim
 
 WORKDIR /app
@@ -8,5 +10,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 EXPOSE 8080
-
 CMD ["python", "real_vision_server.py"] 
