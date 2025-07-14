@@ -21,8 +21,10 @@
     "python": ">=3.8.0"
   },
   "dependencies": {
+    "@radix-ui/react-dialog": "^1.1.14",
     "ml-pca": "^4.1.1",
     "plotly.js": "^3.0.1",
-    "react-plotly.js": "^2.6.0"
+    "react-plotly.js": "^2.6.0",
+    "recharts": "^3.1.0"
   }
 }

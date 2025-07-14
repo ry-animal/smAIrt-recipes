@@ -12,3 +12,6 @@ class Config:
     MAX_IMAGE_SIZE = 10 * 1024 * 1024
     SUPPORTED_IMAGE_FORMATS = ["jpg", "jpeg", "png", "webp"]
     DEBUG = os.getenv("DEBUG", "False").lower() == "true"
+    REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+    REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+    REDIS_DB = int(os.getenv("REDIS_DB", 0))

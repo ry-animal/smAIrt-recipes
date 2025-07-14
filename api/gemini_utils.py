@@ -49,10 +49,7 @@ def identify_ingredients(image_data: str) -> List[str]:
         )
         model = genai.GenerativeModel(
             'gemini-2.0-flash-exp',
-            generation_config=genai.GenerationConfig(
-                response_mime_type="application/json",
-                response_schema=ingredient_schema
-            )
+            generation_config=genai.GenerationConfig()
         )
         response = model.generate_content([prompt, image])
         result = json.loads(response.text)
@@ -104,10 +101,7 @@ def suggest_recipes(ingredients: List[str], dietary_preferences: str = None) -> 
         )
         model = genai.GenerativeModel(
             'gemini-2.0-flash-exp',
-            generation_config=genai.GenerationConfig(
-                response_mime_type="application/json",
-                response_schema=recipe_schema
-            )
+            generation_config=genai.GenerationConfig()
         )
         response = model.generate_content(prompt)
         result = json.loads(response.text)
@@ -192,10 +186,7 @@ def generate_shopping_list(recipe: Dict[str, Any], available_ingredients: List[s
         )
         model = genai.GenerativeModel(
             'gemini-2.0-flash-exp',
-            generation_config=genai.GenerationConfig(
-                response_mime_type="application/json",
-                response_schema=shopping_schema
-            )
+            generation_config=genai.GenerationConfig()
         )
         response = model.generate_content(prompt)
         result = json.loads(response.text)

@@ -2,14 +2,18 @@ import base64
 import json
 from typing import List, Dict, Any
 import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
 from PIL import Image
 import io
 import torch
 from transformers import ViTImageProcessor, ViTForImageClassification
 from sentence_transformers import SentenceTransformer
+from threading import Lock
+import redis
+import hashlib
+import logging
+import re
 
-from config import Config
+from backend.config import Config
 
 class GeminiService:
     def __init__(self):
@@ -22,6 +26,22 @@ class GeminiService:
         self.hf_model = None
         self.hf_class_names = None
         self.st_model = None
+        self._embedding_cache = {}
+        self._embedding_cache_lock = Lock()
+        self._use_redis = True
+        try:
+            self.redis = redis.Redis(
+                host=Config.REDIS_HOST,
+                port=Config.REDIS_PORT,
+                db=Config.REDIS_DB,
+                decode_responses=False
+            )
+            # Test connection
+            self.redis.ping()
+        except Exception as e:
+            logging.warning(f"Redis unavailable, falling back to in-memory cache: {e}")
+            self._use_redis = False
+            self.redis = None
 
     def _hf_load(self):
         if self.hf_processor is None or self.hf_model is None:
@@ -40,7 +60,32 @@ class GeminiService:
     def ingredient_embeddings(self, ingredients: list[str]) -> list[list[float]]:
         if self.st_model is None:
             self.st_model = SentenceTransformer('all-MiniLM-L6-v2')
-        return self.st_model.encode(ingredients, convert_to_numpy=True).tolist()
+        key_str = json.dumps(ingredients, sort_keys=True)
+        key_hash = hashlib.sha256(key_str.encode()).hexdigest()
+        redis_key = f"embedding:{key_hash}"
+        if self._use_redis and self.redis:
+            try:
+                cached = self.redis.get(redis_key)
+                if cached:
+                    return json.loads(cached)
+            except Exception as e:
+                logging.warning(f"Redis error, using in-memory cache: {e}")
+                self._use_redis = False
+        if not self._use_redis:
+            with self._embedding_cache_lock:
+                if redis_key in self._embedding_cache:
+                    return self._embedding_cache[redis_key]
+        embeddings = self.st_model.encode(ingredients, convert_to_numpy=True).tolist()
+        if self._use_redis and self.redis:
+            try:
+                self.redis.set(redis_key, json.dumps(embeddings))
+            except Exception as e:
+                logging.warning(f"Redis set error, using in-memory cache: {e}")
+                self._use_redis = False
+        if not self._use_redis:
+            with self._embedding_cache_lock:
+                self._embedding_cache[redis_key] = embeddings
+        return embeddings
 
     def identify_ingredients(self, image_data: str) -> List[str]:
         try:
@@ -74,8 +119,6 @@ class GeminiService:
             model = genai.GenerativeModel(
                 'gemini-2.0-flash-exp',
                 generation_config=genai.GenerationConfig(
-                    response_mime_type="application/json",
-                    response_schema=ingredient_schema
                 )
             )
             response = model.generate_content([prompt, image])
@@ -131,26 +174,49 @@ class GeminiService:
             }
             prompt = f"""
             Based on these ingredients: {ingredients_str}
-            Please suggest 2-3 specific recipes that can be made primarily with these ingredients.
+            You must return exactly 3 specific recipes that can be made primarily with these ingredients.
+            Return your answer as a valid JSON object with a single key 'recipes', whose value is an array of 3 recipe objects.
+            Each recipe object must have:
+            - name (string)
+            - ingredients (array of strings, with quantities, e.g., '1 cup onion')
+            - instructions (string, numbered steps separated by newlines)
+            - cooking_time (string)
+            - servings (integer)
+            Example:
+            {{"recipes": [
+              {{"name": "Recipe 1", "ingredients": ["1 cup onion"], "instructions": "1. ...", "cooking_time": "30 minutes", "servings": 4}},
+              {{"name": "Recipe 2", "ingredients": ["2 cups flour"], "instructions": "1. ...", "cooking_time": "45 minutes", "servings": 6}},
+              {{"name": "Recipe 3", "ingredients": ["1 lb meat"], "instructions": "1. ...", "cooking_time": "60 minutes", "servings": 4}}
+            ]}}
             {f"Consider these dietary preferences: {dietary_preferences}" if dietary_preferences else ""}
-            For each recipe, provide:
-            - A descriptive recipe name
-            - Complete ingredients list with quantities (e.g., "1 cup onion", "2 tbsp olive oil")
-            - Step-by-step cooking instructions as a single string with numbered steps separated by newlines
-            - Estimated cooking time (e.g., "30 minutes")
-            - Number of servings as an integer
             Make the recipes practical and achievable with common cooking methods.
             """
             model = genai.GenerativeModel(
                 'gemini-2.0-flash-exp',
                 generation_config=genai.GenerationConfig(
-                    response_mime_type="application/json",
-                    response_schema=recipe_schema
                 )
             )
             response = model.generate_content(prompt)
-            result = json.loads(response.text)
-            recipes = result.get("recipes", [])
+            # Robust JSON extraction
+            raw_text = response.text
+            json_str = None
+            try:
+                # Try direct parse
+                result = json.loads(raw_text)
+            except Exception:
+                # Try to extract JSON substring
+                match = re.search(r'\{\s*"recipes"\s*:\s*\[.*?\]\s*\}', raw_text, re.DOTALL)
+                if match:
+                    json_str = match.group(0)
+                    try:
+                        result = json.loads(json_str)
+                    except Exception as e:
+                        print(f"Error parsing extracted JSON: {e}\nExtracted: {json_str}")
+                        result = {}
+                else:
+                    print(f"No JSON object found in Gemini output:\n{raw_text}")
+                    result = {}
+            recipes = result.get("recipes", []) if isinstance(result, dict) else []
             formatted_recipes = []
             for recipe in recipes:
                 if all(key in recipe for key in ["name", "ingredients", "instructions", "cooking_time", "servings"]):
@@ -162,7 +228,10 @@ class GeminiService:
                         "servings": recipe["servings"],
                         "source": "AI Generated"
                     })
-            return formatted_recipes if formatted_recipes else self._create_fallback_recipe(ingredients)
+            if len(formatted_recipes) < 3:
+                print(f"Gemini output did not yield 3 valid recipes. Raw output:\n{raw_text}")
+                return self._create_fallback_recipe(ingredients)
+            return formatted_recipes
         except Exception as e:
             print(f"Error suggesting recipes with structured output: {str(e)}")
             return self._create_fallback_recipe(ingredients)
@@ -170,15 +239,36 @@ class GeminiService:
     def _create_fallback_recipe(self, ingredients: List[str]) -> List[Dict[str, Any]]:
         try:
             ingredients_str = ", ".join(ingredients[:3])
-            fallback_recipe = {
-                "name": f"Simple Stir-Fry with {ingredients_str}",
-                "ingredients": ingredients + ["2 tbsp olive oil", "1 tsp salt", "1/2 tsp black pepper", "2 cloves garlic"],
-                "instructions": f"1. Heat olive oil in a large pan over medium-high heat\n2. Add garlic and cook for 1 minute until fragrant\n3. Add {ingredients[0]} and cook for 3-4 minutes\n4. Add remaining vegetables: {', '.join(ingredients[1:])}\n5. Stir-fry for 5-7 minutes until vegetables are tender-crisp\n6. Season with salt and pepper to taste\n7. Serve immediately while hot",
-                "cooking_time": "15 minutes",
-                "servings": 4,
-                "source": "Fallback Recipe"
-            }
-            return [fallback_recipe]
+            
+            # Create 3 diverse fallback recipes
+            fallback_recipes = [
+                {
+                    "name": f"Simple Stir-Fry with {ingredients_str}",
+                    "ingredients": ingredients + ["2 tbsp olive oil", "1 tsp salt", "1/2 tsp black pepper", "2 cloves garlic"],
+                    "instructions": f"1. Heat olive oil in a large pan over medium-high heat\n2. Add garlic and cook for 1 minute until fragrant\n3. Add {ingredients[0]} and cook for 3-4 minutes\n4. Add remaining vegetables: {', '.join(ingredients[1:])}\n5. Stir-fry for 5-7 minutes until vegetables are tender-crisp\n6. Season with salt and pepper to taste\n7. Serve immediately while hot",
+                    "cooking_time": "15 minutes",
+                    "servings": 4,
+                    "source": "Fallback Recipe"
+                },
+                {
+                    "name": f"Roasted {ingredients_str} with Herbs",
+                    "ingredients": ingredients + ["3 tbsp olive oil", "1 tsp dried thyme", "1 tsp dried rosemary", "Salt and pepper"],
+                    "instructions": f"1. Preheat oven to 425°F (220°C)\n2. Cut vegetables into similar-sized pieces\n3. Toss with olive oil, thyme, rosemary, salt and pepper\n4. Spread on a baking sheet in single layer\n5. Roast for 25-30 minutes until tender and golden\n6. Serve as a side dish or over grains",
+                    "cooking_time": "30 minutes",
+                    "servings": 4,
+                    "source": "Fallback Recipe"
+                },
+                {
+                    "name": f"{ingredients_str} Soup",
+                    "ingredients": ingredients + ["4 cups vegetable broth", "1 onion diced", "2 cloves garlic", "1 tbsp olive oil", "Salt and pepper"],
+                    "instructions": f"1. Heat olive oil in a large pot over medium heat\n2. Add diced onion and garlic, cook until fragrant\n3. Add chopped vegetables and cook for 5 minutes\n4. Pour in vegetable broth and bring to a boil\n5. Reduce heat and simmer for 20-25 minutes until vegetables are tender\n6. Season with salt and pepper to taste\n7. Serve hot with crusty bread",
+                    "cooking_time": "35 minutes",
+                    "servings": 4,
+                    "source": "Fallback Recipe"
+                }
+            ]
+            
+            return fallback_recipes
         except Exception as e:
             print(f"Error creating fallback recipe: {str(e)}")
             return []
@@ -229,8 +319,6 @@ class GeminiService:
             model = genai.GenerativeModel(
                 'gemini-2.0-flash-exp',
                 generation_config=genai.GenerationConfig(
-                    response_mime_type="application/json",
-                    response_schema=shopping_schema
                 )
             )
             response = model.generate_content(prompt)

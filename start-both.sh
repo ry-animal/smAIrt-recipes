@@ -86,8 +86,6 @@ echo "🚀 Starting backend server..."
 echo "   📍 Backend: http://localhost:8080"
 echo "   📚 API docs: http://localhost:8080/docs"
 
-PYTHONPATH=$(pwd) uvicorn backend.main:app --host 0.0.0.0 --port 8080 --reload > backend.log 2>&1 &
-BACKEND_PID=$!
 
 # Wait a moment for backend to start
 sleep 3

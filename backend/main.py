@@ -1,14 +1,17 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File, Query
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+print("DEBUG sys.path:", sys.path)
+from fastapi import FastAPI, HTTPException, File, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import base64
 from typing import Optional, List
 import uvicorn
 import numpy as np
 from sklearn.cluster import KMeans
 
-from services.gemini_service import GeminiService
-from agents.recipe_agent import RecipeAgent
+from backend.services.gemini_service import GeminiService
+from backend.agents.recipe_agent import RecipeAgent
 
 app = FastAPI(title="Smart Recipe Assistant API", version="1.0.0")
 
@@ -95,6 +98,12 @@ class IngredientClusterResponse(BaseModel):
     clusters: list[dict]
     centroids: list[list[float]]
 
+class RecipeEmbedRequest(BaseModel):
+    recipes: list[dict]
+
+class RecipeEmbedResponse(BaseModel):
+    embeddings: list[dict]
+
 @app.get("/")
 async def root():
     return {"message": "Smart Recipe Assistant API"}
@@ -103,45 +112,18 @@ async def root():
 async def analyze_ingredients(upload: ImageUpload):
     """Analyze uploaded image to identify ingredients and suggest recipes"""
     try:
-        if not gemini_service or not recipe_agent:
-            fallback_ingredients = ["onion", "carrot", "potato"]
-            print("📝 Using fallback ingredients (image analysis not available)")
-            recipes = [
-                {
-                    "name": "Simple Vegetable Stir-Fry",
-                    "ingredients": fallback_ingredients + ["oil", "salt", "pepper", "garlic"],
-                    "instructions": "1. Heat oil in pan\n2. Add garlic and cook 1 minute\n3. Add vegetables and stir-fry 8-10 minutes\n4. Season with salt and pepper\n5. Serve hot",
-                    "cooking_time": "15 minutes",
-                    "servings": 4,
-                    "source": "Fallback Recipe"
-                }
-            ]
-            return RecipeResponse(
-                recipes=recipes,
-                ingredients_identified=fallback_ingredients
-            )
-        result = recipe_agent.process_image_query(upload.image_data)
-        # result["messages"][-1].content contains both Gemini and HF results as a string
-        # Parse out both for the response
-        content = result["messages"][-1].content if "messages" in result and result["messages"] else ""
-        gemini_ingredients = []
-        hf_ingredients = []
-        import re
-        gemini_match = re.search(r"Gemini: (.+?)\\n", content)
-        hf_match = re.search(r"HuggingFace: (.+)", content)
-        if gemini_match:
-            gemini_ingredients = [s.strip() for s in gemini_match.group(1).replace("Identified ingredients:", "").split(",") if s.strip()]
-        if hf_match:
-            hf_ingredients = [s.strip() for s in hf_match.group(1).replace("[HF] Predicted food:", "").split(",") if s.strip()]
+        # Use tool_use for ingredient recognition (Gemini + HF fallback)
+        gemini_result = recipe_agent.tool_use("ingredient_recognition", image_data=upload.image_data)
+        hf_result = recipe_agent.tool_use("hf_ingredient_recognition", image_data=upload.image_data)
+        # Parse results (assume both return lists of ingredients or strings)
+        gemini_ingredients = gemini_result if isinstance(gemini_result, list) else []
+        hf_ingredients = hf_result if isinstance(hf_result, list) else []
         # For recipes, use Gemini ingredients if available, else fallback to HF, else fallback
         ingredients_for_recipes = gemini_ingredients or hf_ingredients or ["onion", "carrot", "potato"]
         recipes = gemini_service.suggest_recipes(ingredients_for_recipes)
         return RecipeResponse(
             recipes=recipes,
-            ingredients_identified={
-                "gemini": gemini_ingredients,
-                "huggingface": hf_ingredients
-            }
+            ingredients_identified=gemini_ingredients or hf_ingredients or []
         )
     except Exception as e:
         print(f"❌ Image analysis error: {str(e)}")
@@ -151,7 +133,7 @@ async def analyze_ingredients(upload: ImageUpload):
 async def chat_query(query: TextQuery):
     """Handle text-based queries for recipes, cooking questions, etc."""
     try:
-        response = recipe_agent.process_query(query.query, query.context or "")
+        response = recipe_agent.chat(query.query, query.context or "")
         return ChatResponse(
             response=response,
             type="clarification"
@@ -306,6 +288,23 @@ async def ingredient_cluster(request: IngredientClusterRequest):
         ]
         centroids = kmeans.cluster_centers_.tolist()
         return IngredientClusterResponse(clusters=clusters, centroids=centroids)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/recipe-embed", response_model=RecipeEmbedResponse)
+async def recipe_embed(request: RecipeEmbedRequest):
+    try:
+        def recipe_to_text(recipe):
+            name = recipe.get("name", "")
+            ingredients = recipe.get("ingredients", [])
+            if isinstance(ingredients, list):
+                ingredients = ", ".join(ingredients)
+            return f"{name}: {ingredients}"
+        texts = [recipe_to_text(r) for r in request.recipes]
+        embeddings = gemini_service.ingredient_embeddings(texts)
+        return RecipeEmbedResponse(
+            embeddings=[{"recipe": recipe, "embedding": emb} for recipe, emb in zip(request.recipes, embeddings)]
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

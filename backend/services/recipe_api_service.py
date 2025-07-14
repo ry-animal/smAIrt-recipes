@@ -1,6 +1,6 @@
 import requests
 from typing import List, Dict, Any, Optional
-from config import Config
+from backend.config import Config
 
 class RecipeAPIService:
     """Service for integrating with external recipe APIs like Spoonacular"""

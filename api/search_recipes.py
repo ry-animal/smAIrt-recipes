@@ -12,12 +12,29 @@ def handler(request: VercelRequest):
 
     recipes = suggest_recipes(ingredients)
     if not recipes:
+        ingredients_str = ", ".join(ingredients[:3])
         recipes = [
             {
-                "name": f"Stir-Fry with {', '.join(ingredients)}",
-                "ingredients": ingredients + ["oil", "salt", "pepper"],
-                "instructions": "1. Heat oil. 2. Add ingredients. 3. Cook.",
+                "name": f"Stir-Fry with {ingredients_str}",
+                "ingredients": ingredients + ["2 tbsp oil", "salt", "pepper"],
+                "instructions": "1. Heat oil in pan. 2. Add ingredients. 3. Stir-fry 5-7 minutes. 4. Season and serve.",
                 "cooking_time": "15 minutes",
+                "servings": 4,
+                "source": "Generated Recipe"
+            },
+            {
+                "name": f"Roasted {ingredients_str}",
+                "ingredients": ingredients + ["3 tbsp olive oil", "herbs", "salt"],
+                "instructions": "1. Preheat oven to 425°F. 2. Toss with oil and seasonings. 3. Roast 25-30 minutes.",
+                "cooking_time": "30 minutes",
+                "servings": 4,
+                "source": "Generated Recipe"
+            },
+            {
+                "name": f"{ingredients_str} Soup",
+                "ingredients": ingredients + ["4 cups broth", "onion", "garlic"],
+                "instructions": "1. Sauté onion and garlic. 2. Add vegetables and broth. 3. Simmer 20-25 minutes.",
+                "cooking_time": "35 minutes",
                 "servings": 4,
                 "source": "Generated Recipe"
             }

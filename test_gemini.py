@@ -2,7 +2,7 @@
 
 import os
 import sys
-sys.path.append('/Users/rvan/repos/valken_labs/smairt-recipes/backend')
+sys.path.append('/Users/rvan/repos/valken_labs/smairt-recipe/backend')
 
 def test_gemini_simple():
     """Test if Gemini API is working with a simple text query"""
@@ -52,8 +52,6 @@ def test_gemini_structured():
         model = genai.GenerativeModel(
             'gemini-2.0-flash-exp',
             generation_config=genai.GenerationConfig(
-                response_mime_type="application/json",
-                response_schema=schema
             )
         )
         

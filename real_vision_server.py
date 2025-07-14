@@ -108,10 +108,7 @@ def identify_ingredients_from_image(image_data: str) -> List[str]:
         # Configure the vision model for structured output
         model = genai.GenerativeModel(
             'gemini-2.0-flash-exp',
-            generation_config=genai.GenerationConfig(
-                response_mime_type="application/json",
-                response_schema=ingredient_schema
-            )
+            generation_config=genai.GenerationConfig()
         )
         
         response = model.generate_content([prompt, image])
